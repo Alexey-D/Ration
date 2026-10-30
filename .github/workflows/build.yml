@@ -1,0 +1,62 @@
+# Сборка релизов на серверах GitHub: macOS (.dmg) и Windows (.zip).
+# Запуск: вкладка Actions → «Build releases» → Run workflow, либо push тега вида v0.2.0.
+# Готовые файлы — в разделе Artifacts запуска (хранятся 30 дней).
+name: Build releases
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+env:
+  FLUTTER_VERSION: '3.47.7'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  macos:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: bash tools/package_macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ration-macos
+          path: dist/*.dmg
+          retention-days: 30
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: powershell -ExecutionPolicy Bypass -File tools\package_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ration-windows
+          path: dist/*.zip
+          retention-days: 30
