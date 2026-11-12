@@ -7,7 +7,7 @@ import 'app_logo.dart';
 import 'choice_screen.dart';
 import 'form_widgets.dart';
 import 'format.dart';
-import 'theme_toggle.dart';
+import 'account_button.dart';
 
 const _instruction = [
   'Укажите пол, массу тела, рост и возраст.',
@@ -30,7 +30,7 @@ class ProfileScreen extends ConsumerWidget {
         toolbarHeight: compact ? 72 : 96,
         titleSpacing: compact ? 16 : 32,
         title: AppLogo(size: compact ? 34 : 46),
-        actions: const [ThemeToggleButton(), SizedBox(width: 16)],
+        actions: const [AppBarActions(trailing: 16)],
       ),
       body: switch ((catalog, saved, draft)) {
         (AsyncError(:final error), _, _) || (_, AsyncError(:final error), _) =>

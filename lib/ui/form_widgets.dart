@@ -151,6 +151,9 @@ class NumberField extends StatelessWidget {
   final bool integer;
   final bool signed;
   final bool enabled;
+
+  /// false — пустое поле допустимо.
+  final bool required;
   final String? helper;
   final ValueChanged<double>? onValidChanged;
 
@@ -164,11 +167,13 @@ class NumberField extends StatelessWidget {
     this.integer = false,
     this.signed = false,
     this.enabled = true,
+    this.required = true,
     this.helper,
     this.onValidChanged,
   });
 
   String? _validate(String? text) {
+    if (!required && (text ?? '').trim().isEmpty) return null;
     final v = parseNum(text ?? '');
     if (v == null) return 'Введите число';
     if (integer && v != v.roundToDouble()) return 'Целое число';
@@ -188,7 +193,8 @@ class NumberField extends StatelessWidget {
       ],
       validator: (text) => enabled ? _validate(text) : null,
       onChanged: (text) {
-        if (onValidChanged != null && _validate(text) == null) onValidChanged!(parseNum(text)!);
+        final v = parseNum(text);
+        if (onValidChanged != null && v != null && _validate(text) == null) onValidChanged!(v);
       },
     );
   }

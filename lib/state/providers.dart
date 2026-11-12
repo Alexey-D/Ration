@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart' show Brightness, ThemeMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/password_hasher.dart';
 import '../data/repository.dart';
 import '../data/seed.dart';
+import '../domain/account.dart';
 import '../domain/energy_calculator.dart';
 import '../domain/meal_layout.dart';
 import '../domain/models.dart';
@@ -13,9 +15,97 @@ final repositoryProvider = Provider<AppRepository>((ref) => throw UnimplementedE
 
 final catalogProvider = FutureProvider<Catalog>((ref) => ref.watch(repositoryProvider).loadCatalog());
 
-final savedProfileProvider = FutureProvider<Profile>(
-  (ref) async => await ref.watch(repositoryProvider).loadProfile() ?? defaultProfile,
-);
+/// Хэширование паролей; в тестах подменяется на быстрое (меньше итераций).
+final passwordHasherProvider = Provider<PasswordHasher>((ref) => const PasswordHasher());
+
+/// Вошедший пользователь; null — нужен вход. Сессия запоминается до «Выйти».
+final authProvider = AsyncNotifierProvider<AuthNotifier, AppUser?>(AuthNotifier.new);
+
+class AuthNotifier extends AsyncNotifier<AppUser?> {
+  static const _sessionKey = 'session_user_id';
+
+  AppRepository get _repo => ref.read(repositoryProvider);
+
+  @override
+  Future<AppUser?> build() async {
+    final id = int.tryParse(await _repo.loadSetting(_sessionKey) ?? '');
+    return id == null ? null : _repo.userById(id);
+  }
+
+  /// null — вход выполнен, иначе текст ошибки.
+  Future<String?> login(String login, String password) async {
+    final found = await _repo.credentials(login);
+    if (found == null || !ref.read(passwordHasherProvider).verify(password, found.$2)) {
+      return 'Неверный логин или пароль';
+    }
+    await _start(found.$1);
+    return null;
+  }
+
+  /// null — пользователь создан и вошёл, иначе текст ошибки.
+  Future<String?> register({required String login, required String name, required String password}) async {
+    final error = validateLogin(login) ?? validatePassword(password);
+    if (error != null) return error;
+    try {
+      final user = await _repo.createUser(
+        login: login,
+        name: name.trim().isEmpty ? login.trim() : name,
+        passwordHash: ref.read(passwordHasherProvider).hash(password),
+      );
+      await _start(user);
+      return null;
+    } on LoginTakenException {
+      return 'Логин «${login.trim()}» уже занят';
+    }
+  }
+
+  Future<void> logout() async {
+    await _repo.deleteSetting(_sessionKey);
+    state = const AsyncData(null);
+  }
+
+  Future<void> _start(AppUser user) async {
+    await _repo.saveSetting(_sessionKey, '${user.id}');
+    state = AsyncData(user);
+  }
+}
+
+final currentUserProvider = Provider<AppUser?>((ref) => ref.watch(authProvider).valueOrNull);
+
+/// Сохранённый профиль текущего пользователя (у нового — профиль по умолчанию).
+final savedProfileProvider = FutureProvider<Profile>((ref) async {
+  final user = ref.watch(currentUserProvider);
+  if (user == null) return defaultProfile;
+  return await ref.watch(repositoryProvider).loadProfile(user.id) ?? defaultProfile;
+});
+
+/// История замеров текущего пользователя (по возрастанию даты).
+final measurementsProvider =
+    AsyncNotifierProvider<MeasurementsNotifier, List<Measurement>>(MeasurementsNotifier.new);
+
+class MeasurementsNotifier extends AsyncNotifier<List<Measurement>> {
+  @override
+  Future<List<Measurement>> build() async {
+    final user = ref.watch(currentUserProvider);
+    return user == null ? const [] : ref.read(repositoryProvider).loadMeasurements(user.id);
+  }
+
+  /// Новый замер объединяется с замером за ту же дату; возвращает сохранённый замер.
+  Future<Measurement> save(Measurement m) async {
+    final user = ref.read(currentUserProvider)!;
+    final repo = ref.read(repositoryProvider);
+    final saved = await repo.saveMeasurement(user.id, m);
+    state = AsyncData(await repo.loadMeasurements(user.id));
+    return saved;
+  }
+
+  Future<void> delete(int id) async {
+    final user = ref.read(currentUserProvider)!;
+    final repo = ref.read(repositoryProvider);
+    await repo.deleteMeasurement(user.id, id);
+    state = AsyncData(await repo.loadMeasurements(user.id));
+  }
+}
 
 final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(ThemeModeNotifier.new);
 
@@ -56,20 +146,20 @@ class ProfileDraftNotifier extends Notifier<Profile?> {
 class Calculation {
   final Profile profile;
 
-  /// Вид нагрузки; null — калории тренировки введены вручную.
-  final Activity? activity;
+  /// Виды нагрузки тренировок (по порядку [EnergyResult.sessions]); пусто — данные браслета.
+  final List<Activity?> activities;
   final EnergyResult energy;
   final RationPlan plan;
 
   const Calculation({
     required this.profile,
-    required this.activity,
+    required this.activities,
     required this.energy,
     required this.plan,
   });
 
   Calculation withPlan(RationPlan plan) =>
-      Calculation(profile: profile, activity: activity, energy: energy, plan: plan);
+      Calculation(profile: profile, activities: activities, energy: energy, plan: plan);
 }
 
 final calculationProvider =
@@ -77,31 +167,35 @@ final calculationProvider =
 
 class CalculationNotifier extends Notifier<Calculation?> {
   @override
-  Calculation? build() => null;
+  Calculation? build() {
+    ref.watch(currentUserProvider); // другой пользователь — расчёт сбрасывается
+    return null;
+  }
 
   Catalog get _catalog => ref.read(catalogProvider).requireValue;
 
   /// Расчёт по кнопке «Рассчитать». Если рацион уже есть — сохраняем выбор
   /// продуктов пользователя и только подгоняем порции под новую цель.
   Future<void> calculate(Profile profile) async {
-    final activity =
-        profile.trainingMode == TrainingMode.activity ? _catalog.activity(profile.activityCode) : null;
-    final energy = calculateEnergy(profile, met: activity?.met);
+    final energy = calculateEnergy(profile, metOf: (code) => _catalog.activity(code)?.met);
     final previous = state;
     final (mains, snacks) = previous == null ? await _savedMealCounts() : (0, 0);
     state = Calculation(
       profile: profile,
-      activity: activity,
+      activities: [for (final s in energy.sessions) _catalog.activity(s.session.activityCode)],
       energy: energy,
       plan: previous == null
           ? RationPlan.fromTemplate(_catalog, energy.target, mains: mains, snacks: snacks)
           : previous.plan.withTarget(energy.target),
     );
-    await ref.read(repositoryProvider).saveProfile(profile);
+    final user = ref.read(currentUserProvider);
+    if (user != null) await ref.read(repositoryProvider).saveProfile(user.id, profile);
   }
 
-  static const _mainsKey = 'ration_main_meals';
-  static const _snacksKey = 'ration_snacks';
+  /// Настройки числа приёмов — свои у каждого пользователя.
+  String get _userPrefix => 'user:${ref.read(currentUserProvider)?.id ?? 0}:';
+  String get _mainsKey => '${_userPrefix}ration_main_meals';
+  String get _snacksKey => '${_userPrefix}ration_snacks';
 
   Future<(int, int)> _savedMealCounts() async {
     final repo = ref.read(repositoryProvider);

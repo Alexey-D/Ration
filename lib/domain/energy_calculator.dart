@@ -4,14 +4,25 @@ import 'models.dart';
 /// Коэффициент суточной активности без тренировки (как в «Калькуляторе»).
 const double baseActivityFactor = 1.2;
 
-class EnergyResult {
-  /// MET вида нагрузки; null — калории тренировки введены вручную.
-  final double? met;
+/// Расход на одну тренировку по виду нагрузки.
+class SessionEnergy {
+  final TrainingSession session;
 
-  /// ккал/мин для вида нагрузки; null — ручной ввод.
+  /// MET вида нагрузки; null — вид нагрузки не найден в справочнике.
+  final double? met;
   final double? kcalPerMinute;
 
-  /// Калории тренировки: MET × минуты или значение с браслета.
+  /// ккал/мин × минуты.
+  final double kcal;
+
+  const SessionEnergy({required this.session, required this.met, required this.kcalPerMinute, required this.kcal});
+}
+
+class EnergyResult {
+  /// Тренировки по видам нагрузки; пусто — калории введены с браслета.
+  final List<SessionEnergy> sessions;
+
+  /// Калории тренировок: сумма MET × минуты по всем тренировкам или значение с браслета.
   final double trainingKcal;
 
   final double bmr;
@@ -29,8 +40,7 @@ class EnergyResult {
   final Nutrients target;
 
   const EnergyResult({
-    required this.met,
-    required this.kcalPerMinute,
+    required this.sessions,
     required this.trainingKcal,
     required this.bmr,
     required this.bmrMethod,
@@ -70,21 +80,29 @@ Nutrients macroTargets({
   return Nutrients(kcal: kcal, protein: protein, fat: fat, carbs: carbs < 0 ? 0 : carbs);
 }
 
-/// [met] нужен в режиме [TrainingMode.activity]; в ручном режиме не используется.
-EnergyResult calculateEnergy(Profile p, {double? met}) {
+SessionEnergy _sessionEnergy(TrainingSession s, double? met, double weightKg) {
+  final perMin = met == null ? null : kcalPerMinute(met: met, weightKg: weightKg);
+  return SessionEnergy(session: s, met: met, kcalPerMinute: perMin, kcal: (perMin ?? 0) * s.minutes);
+}
+
+/// [metOf] — MET вида нагрузки по коду (нужен в режиме [TrainingMode.activity]).
+/// Калории тренировок складываются: Σ MET × 3,5 × масса / 200 × минуты.
+EnergyResult calculateEnergy(Profile p, {double? Function(String activityCode)? metOf}) {
   final byActivity = p.trainingMode == TrainingMode.activity;
-  final perMin = byActivity && met != null ? kcalPerMinute(met: met, weightKg: p.weightKg) : null;
-  final training = byActivity ? (perMin ?? 0) * p.trainingMinutes : p.manualTrainingKcal;
+  final sessions = [
+    if (byActivity)
+      for (final s in p.trainings) _sessionEnergy(s, metOf?.call(s.activityCode), p.weightKg),
+  ];
+  final training = byActivity ? sessions.fold(0.0, (sum, s) => sum + s.kcal) : p.manualTrainingKcal;
   final byBodyFat = p.bmrMethod == BmrMethod.bodyFat && p.bodyFatPercent != null;
   final b = byBodyFat
-      ? bodyFatBmr(sex: p.sex, weightKg: p.weightKg, fatPercent: p.bodyFatPercent!)
+      ? cunninghamBmr(weightKg: p.weightKg, fatPercent: p.bodyFatPercent!)
       : bmr(sex: p.sex, weightKg: p.weightKg, heightCm: p.heightCm, age: p.age);
   final rest = b * baseActivityFactor;
   final withTraining = rest + training;
   final kcal = (p.includeTraining ? withTraining : rest) * (1 + p.goalPercent / 100);
   return EnergyResult(
-    met: byActivity ? met : null,
-    kcalPerMinute: perMin,
+    sessions: sessions,
     trainingKcal: training,
     bmr: b,
     bmrMethod: byBodyFat ? BmrMethod.bodyFat : BmrMethod.mifflin,

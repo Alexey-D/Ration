@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/account.dart';
 import '../domain/meal_layout.dart';
 import '../domain/models.dart';
 import '../domain/ration_plan.dart';
 import '../state/providers.dart';
 import 'app_logo.dart';
 import 'format.dart';
-import 'theme_toggle.dart';
+import 'measurement_dialogs.dart';
+import 'account_button.dart';
 
 class RationScreen extends ConsumerWidget {
   const RationScreen({super.key});
@@ -39,8 +41,7 @@ class RationScreen extends ConsumerWidget {
             icon: const Icon(Icons.restart_alt),
             onPressed: calc == null ? null : notifier.resetToTemplate,
           ),
-          const ThemeToggleButton(),
-          const SizedBox(width: 8),
+          const AppBarActions(),
         ],
       ),
       body: calc == null || catalog == null
@@ -66,19 +67,23 @@ class RationScreen extends ConsumerWidget {
   }
 }
 
-class _SummaryCard extends StatelessWidget {
+class _SummaryCard extends ConsumerWidget {
   final Calculation calc;
   const _SummaryCard({required this.calc});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final e = calc.energy;
     final p = calc.profile;
     final t = e.target;
     final goal = p.goalPercent == 0 ? '' : ' (${p.goalPercent > 0 ? '+' : ''}${fmt(p.goalPercent, 0)} %)';
+    final byBand = p.trainingMode == TrainingMode.manual;
     final title = !p.includeTraining
         ? 'День без тренировки'
-        : calc.activity?.displayName ?? 'Тренировка по данным браслета';
+        : byBand
+            ? 'Тренировка по данным браслета'
+            : calc.activities.map((a) => a?.displayName ?? '—').join(' + ');
+    final single = e.sessions.length == 1;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -86,14 +91,22 @@ class _SummaryCard extends StatelessWidget {
           Text(title, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
           Wrap(spacing: 24, runSpacing: 12, children: [
-            if (p.includeTraining && e.met != null) ...[
-              _Metric('MET', fmt(e.met!, 1)),
-              _Metric('Ккал/мин', fmt(e.kcalPerMinute!, 2)),
-              _Metric('Ккал за ${p.trainingMinutes} мин', fmt(e.trainingKcal)),
+            if (p.includeTraining && !byBand && single) ...[
+              _Metric('MET', fmt(e.sessions.first.met ?? 0, 1)),
+              _Metric('Ккал/мин', fmt(e.sessions.first.kcalPerMinute ?? 0, 2)),
+              _Metric('Ккал за ${e.sessions.first.session.minutes} мин', fmt(e.trainingKcal)),
             ],
-            if (p.includeTraining && e.met == null) _Metric('Ккал тренировки (браслет)', fmt(e.trainingKcal)),
+            if (p.includeTraining && !byBand && !single) ...[
+              for (final (i, s) in e.sessions.indexed)
+                _Metric(
+                  'Тренировка ${i + 1} · MET ${fmt(s.met ?? 0, 1)} · ${s.session.minutes} мин',
+                  '${fmt(s.kcal)} ккал',
+                ),
+              _Metric('Ккал тренировок', fmt(e.trainingKcal)),
+            ],
+            if (p.includeTraining && byBand) _Metric('Ккал тренировки (браслет)', fmt(e.trainingKcal)),
             _Metric(
-              e.bmrMethod == BmrMethod.bodyFat ? 'BMR · по ${fmt(p.bodyFatPercent!, 1)} % жира' : 'BMR · Миффлин',
+              e.bmrMethod == BmrMethod.bodyFat ? 'BMR · Каннингем, ${fmt(p.bodyFatPercent!, 1)} % жира' : 'BMR · Миффлин',
               fmt(e.bmr),
             ),
             _Metric('TDC без тренировки', fmt(e.tdcRest), active: !p.includeTraining),
@@ -103,6 +116,17 @@ class _SummaryCard extends StatelessWidget {
             _Metric('Жиры · ${fmt(p.fatPercent)} %', '${fmt(t.fat)} г'),
             _Metric('Углеводы', '${fmt(t.carbs)} г'),
           ]),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            key: const Key('saveRationMeasurement'),
+            onPressed: () => saveMeasurementFlow(
+              context,
+              ref,
+              (date) => measurementFromEnergy(date: date, profile: p, energy: e),
+            ),
+            icon: const Icon(Icons.bookmark_add_outlined),
+            label: const Text('Сохранить замер'),
+          ),
         ]),
       ),
     );

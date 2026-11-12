@@ -45,10 +45,7 @@ class BodyCompositionResult {
   /// Скелетная мышечная масса (Ли), кг; null — обхваты не введены.
   final double? muscleKg;
 
-  /// Коэффициент по % жира (лист «схема»).
-  final double leanFactor;
-
-  /// BMR по проценту жира, ккал.
+  /// BMR по Каннингему (500 + 22 × LBM), ккал.
   final double bmr;
 
   const BodyCompositionResult({
@@ -59,7 +56,6 @@ class BodyCompositionResult {
     required this.fatPercent,
     required this.leanKg,
     required this.muscleKg,
-    required this.leanFactor,
     required this.bmr,
   });
 }
@@ -68,20 +64,12 @@ class BodyCompositionResult {
 double bodySurfaceArea({required double heightCm, required double weightKg}) =>
     math.sqrt(heightCm * weightKg / 3600);
 
-/// Коэффициент по % жира (лист «схема»):
-/// мужчины  < 14 → 1,0; 14–20 → 0,95; 20–28 → 0,90; > 28 → 0,85;
-/// женщины  < 18 → 1,0; 18–28 → 0,95; 28–38 → 0,90; > 38 → 0,85.
-double leanFactor(Sex sex, double fatPercent) {
-  final bounds = sex == Sex.male ? const [14.0, 20.0, 28.0] : const [18.0, 28.0, 38.0];
-  if (fatPercent < bounds[0]) return 1.0;
-  if (fatPercent < bounds[1]) return 0.95;
-  if (fatPercent < bounds[2]) return 0.90;
-  return 0.85;
-}
+/// Безжировая масса, кг: масса × (1 − % жира / 100).
+double leanMass({required double weightKg, required double fatPercent}) => weightKg * (1 - fatPercent / 100);
 
-/// BMR по проценту жира: масса × 24 × (1 муж / 0,9 жен) × коэффициент по % жира.
-double bodyFatBmr({required Sex sex, required double weightKg, required double fatPercent}) =>
-    weightKg * 24 * (sex == Sex.male ? 1.0 : 0.9) * leanFactor(sex, fatPercent);
+/// BMR по Каннингему: 500 + 22 × безжировая масса (LBM), кг.
+double cunninghamBmr({required double weightKg, required double fatPercent}) =>
+    500 + 22 * leanMass(weightKg: weightKg, fatPercent: fatPercent);
 
 /// Скелетная мышечная масса по уравнению Ли (Lee, 2000) в варианте исходного Excel:
 /// рост, м × (0,00088·(обхв. бедра − скл. бедра/10)² + 0,00744·(обхв. плеча − скл. плеча сзади/10)²
@@ -132,7 +120,6 @@ BodyCompositionResult calculateBodyComposition({
     muscleKg: girths == null
         ? null
         : leeMuscleMass(sex: sex, heightCm: heightCm, age: age, folds: folds, girths: girths),
-    leanFactor: leanFactor(sex, fatPercent),
-    bmr: bodyFatBmr(sex: sex, weightKg: weightKg, fatPercent: fatPercent),
+    bmr: cunninghamBmr(weightKg: weightKg, fatPercent: fatPercent),
   );
 }

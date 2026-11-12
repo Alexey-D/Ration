@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/account.dart';
 import '../domain/body_composition.dart';
 import '../domain/energy_calculator.dart';
 import '../domain/models.dart';
@@ -8,7 +9,8 @@ import '../state/providers.dart';
 import 'app_logo.dart';
 import 'form_widgets.dart';
 import 'format.dart';
-import 'theme_toggle.dart';
+import 'measurement_dialogs.dart';
+import 'account_button.dart';
 import 'training_screen.dart';
 
 const _instruction = [
@@ -19,7 +21,8 @@ const _instruction = [
   'Для расчёта мышечной массы дополнительно введите обхваты бедра, голени и плеча, см (необязательно).',
   'Результаты пересчитываются сразу при вводе.',
   'Кнопка «Использовать в расчёте рациона» перенесёт процент жира в рацион: '
-      'базовый обмен будет считаться по проценту жира.',
+      'базовый обмен будет считаться по Каннингему (по безжировой массе).',
+  'Кнопка «Сохранить замер» добавит складки, % жира, LBM и обхваты в историю — динамика видна в личном кабинете.',
 ];
 
 const _foldRange = (min: 1.0, max: 100.0);
@@ -40,7 +43,7 @@ class BodyFatScreen extends ConsumerWidget {
       appBar: AppBar(
         toolbarHeight: 64,
         title: const AppLogo(size: 30, showTagline: false),
-        actions: const [ThemeToggleButton(), SizedBox(width: 8)],
+        actions: const [AppBarActions(trailing: 8)],
       ),
       body: p == null
           ? const Center(child: CircularProgressIndicator())
@@ -89,15 +92,28 @@ class _BodyFatFormState extends ConsumerState<_BodyFatForm> {
     return v == null || v < range.min || v > range.max ? null : v;
   }
 
-  /// Результат, если все складки введены корректно; обхваты — по желанию (нужны все три).
-  BodyCompositionResult? _result(Profile p) {
-    final sites = skinfoldsFor(p.sex);
+  /// Складки, если все введены корректно.
+  Map<Skinfold, double>? _foldValues(Profile p) {
     final folds = <Skinfold, double>{};
-    for (final s in sites) {
+    for (final s in skinfoldsFor(p.sex)) {
       final v = _value(_folds[s]!, _foldRange);
       if (v == null) return null;
       folds[s] = v;
     }
+    return folds;
+  }
+
+  /// Введённые обхваты (любые из трёх).
+  Map<Girth, double> _girthValues() => {
+        if (_value(_thigh, _girthRange) case final v?) Girth.thigh: v,
+        if (_value(_calf, _girthRange) case final v?) Girth.calf: v,
+        if (_value(_arm, _girthRange) case final v?) Girth.arm: v,
+      };
+
+  /// Результат, если все складки введены корректно; обхваты — по желанию (нужны все три).
+  BodyCompositionResult? _result(Profile p) {
+    final folds = _foldValues(p);
+    if (folds == null) return null;
     final thigh = _value(_thigh, _girthRange);
     final calf = _value(_calf, _girthRange);
     final arm = _value(_arm, _girthRange);
@@ -174,6 +190,24 @@ class _BodyFatFormState extends ConsumerState<_BodyFatForm> {
             icon: const Icon(Icons.restaurant_menu),
             label: const Text('Использовать в расчёте рациона'),
           ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            key: const Key('saveBodyFatMeasurement'),
+            style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+            onPressed: () => saveMeasurementFlow(
+              context,
+              ref,
+              (date) => Measurement.fromBodyComposition(
+                date: date,
+                profile: p,
+                result: result,
+                skinfolds: _foldValues(p)!,
+                girths: _girthValues(),
+              ),
+            ),
+            icon: const Icon(Icons.bookmark_add_outlined),
+            label: const Text('Сохранить замер'),
+          ),
         ],
       ]),
     );
@@ -240,8 +274,7 @@ class _ResultCard extends StatelessWidget {
           row('Средняя полутолщина складки', '${fmt(r.meanHalfSkinfold, 2)} мм'),
           row('Площадь поверхности тела', '${fmt(r.bodySurfaceArea, 2)} м²'),
           const Divider(),
-          row('Коэффициент по % жира', fmt(r.leanFactor, 2)),
-          row('BMR по % жира', '${fmt(r.bmr)} ккал', strong: true),
+          row('BMR по Каннингему (500 + 22 × LBM)', '${fmt(r.bmr)} ккал', strong: true),
           row('BMR по Миффлину — Сан Жеору', '${fmt(mifflin)} ккал'),
         ]),
       ),

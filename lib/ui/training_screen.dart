@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/body_composition.dart';
 import '../domain/energy_calculator.dart';
 import '../domain/models.dart';
 import '../state/providers.dart';
@@ -10,14 +11,14 @@ import 'app_logo.dart';
 import 'form_widgets.dart';
 import 'format.dart';
 import 'ration_screen.dart';
-import 'theme_toggle.dart';
+import 'account_button.dart';
 
 const _instruction = [
-  'Выберите способ расчёта базового обмена (BMR): по формуле Миффлина — Сан Жеора или по проценту жира. '
+  'Выберите способ расчёта базового обмена (BMR): по формуле Миффлина — Сан Жеора (рост, масса, возраст) или по формуле Каннингема (по безжировой массе, нужен % жира). '
       'Процент жира можно ввести вручную или рассчитать по складкам (калипер).',
   'Отметьте, учитывать ли тренировку. Без тренировки цель на день = BMR × 1,2.',
-  'Калории тренировки задайте одним из способов: выберите вид нагрузки из справочника и укажите длительность '
-      'или переключитесь на «Данные браслета» и введите калории, потраченные на тренировке, с фитнес-браслета или часов.',
+  'Калории тренировки задайте одним из способов: выберите число тренировок за день (от 1 до 3), для каждой — вид нагрузки из справочника и длительность '
+      'или переключитесь на «Данные браслета» и введите калории, потраченные на тренировках, с фитнес-браслета или часов. Калории всех тренировок складываются.',
   'При необходимости задайте дефицит (например, −10) или профицит (+10) калорий, %.',
   'Настройте соотношение БЖУ: белки — от 0,6 до 2 г на кг массы тела, жиры — от 10 до 30 % калорийности. '
       'Углеводы — оставшиеся калории.',
@@ -39,7 +40,7 @@ class TrainingScreen extends ConsumerWidget {
       appBar: AppBar(
         toolbarHeight: 64,
         title: const AppLogo(size: 30, showTagline: false),
-        actions: const [ThemeToggleButton(), SizedBox(width: 8)],
+        actions: const [AppBarActions(trailing: 8)],
       ),
       body: catalog == null || draft == null
           ? const Center(child: CircularProgressIndicator())
@@ -59,7 +60,11 @@ class _TrainingForm extends ConsumerStatefulWidget {
 
 class _TrainingFormState extends ConsumerState<_TrainingForm> {
   final _formKey = GlobalKey<FormState>();
-  late final _minutes = TextEditingController(text: '${widget.initial.trainingMinutes}');
+  /// Поля длительности — по одному на каждую возможную тренировку.
+  late final _minutes = [
+    for (var i = 0; i < trainingCountRange.max; i++)
+      TextEditingController(text: '${widget.initial.trainings[i.clamp(0, widget.initial.trainings.length - 1)].minutes}'),
+  ];
   late final _manualKcal = TextEditingController(text: numText(widget.initial.manualTrainingKcal));
   late final _goal = TextEditingController(text: numText(widget.initial.goalPercent));
   late final _bodyFat = TextEditingController(
@@ -69,7 +74,7 @@ class _TrainingFormState extends ConsumerState<_TrainingForm> {
 
   @override
   void dispose() {
-    for (final c in [_minutes, _manualKcal, _goal, _bodyFat]) {
+    for (final c in [..._minutes, _manualKcal, _goal, _bodyFat]) {
       c.dispose();
     }
     super.dispose();
@@ -77,9 +82,24 @@ class _TrainingFormState extends ConsumerState<_TrainingForm> {
 
   void _update(Profile Function(Profile) change) => ref.read(profileDraftProvider.notifier).update(change);
 
-  Future<void> _submit(Profile draft, Activity? activity) async {
-    final activityMissing =
-        draft.includeTraining && draft.trainingMode == TrainingMode.activity && activity == null;
+  void _updateSession(int index, TrainingSession Function(TrainingSession) change) => _update((d) => d.copyWith(
+        trainings: [for (final (i, s) in d.trainings.indexed) i == index ? change(s) : s],
+      ));
+
+  /// Новые тренировки — копия последней (вид нагрузки и длительность), их можно поменять.
+  void _setTrainingCount(int count) => _update((d) {
+        final list = [...d.trainings.take(count)];
+        while (list.length < count) {
+          list.add(list.last);
+          _minutes[list.length - 1].text = '${list.last.minutes}';
+        }
+        return d.copyWith(trainings: list);
+      });
+
+  Future<void> _submit(Profile draft) async {
+    final activityMissing = draft.includeTraining &&
+        draft.trainingMode == TrainingMode.activity &&
+        draft.trainings.any((t) => widget.catalog.activity(t.activityCode) == null);
     if (!_formKey.currentState!.validate() || activityMissing) return;
     setState(() => _busy = true);
     try {
@@ -98,9 +118,8 @@ class _TrainingFormState extends ConsumerState<_TrainingForm> {
     ref.listen(profileDraftProvider.select((d) => d?.bodyFatPercent), (_, next) {
       if (next != null && parseNum(_bodyFat.text) != next) _bodyFat.text = numText(next);
     });
-    final activity = widget.catalog.activity(p.activityCode);
     final byActivity = p.trainingMode == TrainingMode.activity;
-    final energy = calculateEnergy(p, met: activity?.met);
+    final energy = calculateEnergy(p, metOf: (code) => widget.catalog.activity(code)?.met);
     const gap = SizedBox(height: 16);
 
     return StepFormLayout(
@@ -116,7 +135,7 @@ class _TrainingFormState extends ConsumerState<_TrainingForm> {
           SegmentedButton<BmrMethod>(
             segments: const [
               ButtonSegment(value: BmrMethod.mifflin, label: Text('Миффлин — Сан Жеор')),
-              ButtonSegment(value: BmrMethod.bodyFat, label: Text('По % жира')),
+              ButtonSegment(value: BmrMethod.bodyFat, label: Text('Каннингем (по % жира)')),
             ],
             selected: {p.bmrMethod},
             onSelectionChanged: (s) => _update((d) => d.copyWith(bmrMethod: s.first)),
@@ -147,7 +166,7 @@ class _TrainingFormState extends ConsumerState<_TrainingForm> {
             padding: const EdgeInsets.only(top: 8),
             child: Text(
               energy.bmrMethod == BmrMethod.bodyFat
-                  ? 'BMR ${fmt(energy.bmr)} ккал — по ${fmt(p.bodyFatPercent!, 1)} % жира'
+                  ? 'BMR ${fmt(energy.bmr)} ккал — по Каннингему: LBM ${fmt(leanMass(weightKg: p.weightKg, fatPercent: p.bodyFatPercent!), 1)} кг (${fmt(p.bodyFatPercent!, 1)} % жира)'
                   : 'BMR ${fmt(energy.bmr)} ккал — по формуле Миффлина — Сан Жеора',
               style: Theme.of(context).textTheme.bodySmall,
             ),
@@ -182,35 +201,57 @@ class _TrainingFormState extends ConsumerState<_TrainingForm> {
             ),
             gap,
             if (byActivity) ...[
-              InkWell(
-                key: const Key('activityField'),
-                borderRadius: BorderRadius.circular(8),
-                onTap: () async {
-                  final picked = await ActivityPickerDialog.show(context, widget.catalog, activity);
-                  if (picked != null) _update((d) => d.copyWith(activityCode: picked.code));
-                },
-                child: InputDecorator(
-                  decoration: InputDecoration(
-                    labelText: 'Вид нагрузки',
-                    suffixIcon: const Icon(Icons.search),
-                    helperText: activity == null
-                        ? null
-                        : 'MET ${fmt(activity.met, 1)} · ${fmt(energy.kcalPerMinute ?? 0, 2)} ккал/мин',
-                    errorText: activity == null ? 'Выберите вид нагрузки' : null,
-                  ),
-                  child: Text(activity?.displayName ?? '', maxLines: 2, overflow: TextOverflow.ellipsis),
+              Row(children: [
+                const Expanded(child: Text('Количество тренировок')),
+                SegmentedButton<int>(
+                  key: const Key('trainingCount'),
+                  showSelectedIcon: false,
+                  segments: [
+                    for (var n = trainingCountRange.min; n <= trainingCountRange.max; n++)
+                      ButtonSegment(value: n, label: Text('$n')),
+                  ],
+                  selected: {p.trainings.length},
+                  onSelectionChanged: (s) => _setTrainingCount(s.first),
                 ),
-              ),
-              gap,
-              NumberField(
-                controller: _minutes,
-                label: 'Длительность тренировки',
-                suffix: 'мин',
-                min: 0,
-                max: 600,
-                integer: true,
-                onValidChanged: (v) => _update((d) => d.copyWith(trainingMinutes: v.round())),
-              ),
+              ]),
+              for (final (i, s) in energy.sessions.indexed) ...[
+                gap,
+                if (energy.sessions.length > 1)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(children: [
+                      Expanded(
+                        child: Text('Тренировка ${i + 1}', style: Theme.of(context).textTheme.titleSmall),
+                      ),
+                      Text('${fmt(s.kcal)} ккал', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ]),
+                  ),
+                _ActivityField(
+                  key: Key('activityField-$i'),
+                  catalog: widget.catalog,
+                  energy: s,
+                  onPicked: (a) => _updateSession(i, (t) => t.copyWith(activityCode: a.code)),
+                ),
+                gap,
+                NumberField(
+                  key: Key('minutesField-$i'),
+                  controller: _minutes[i],
+                  label: 'Длительность тренировки',
+                  suffix: 'мин',
+                  min: 0,
+                  max: 600,
+                  integer: true,
+                  onValidChanged: (v) => _updateSession(i, (t) => t.copyWith(minutes: v.round())),
+                ),
+              ],
+              if (energy.sessions.length > 1)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Row(children: [
+                    const Expanded(child: Text('Всего за тренировки')),
+                    Text('${fmt(energy.trainingKcal)} ккал', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ]),
+                ),
             ] else
               NumberField(
                 controller: _manualKcal,
@@ -276,11 +317,43 @@ class _TrainingFormState extends ConsumerState<_TrainingForm> {
           const SizedBox(height: 20),
           FilledButton.icon(
             style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-            onPressed: _busy ? null : () => _submit(p, activity),
+            onPressed: _busy ? null : () => _submit(p),
             icon: const Icon(Icons.restaurant_menu),
             label: const Text('Рассчитать рацион'),
           ),
         ]),
+      ),
+    );
+  }
+}
+
+/// Поле выбора вида нагрузки (открывает справочник с поиском).
+class _ActivityField extends StatelessWidget {
+  final Catalog catalog;
+  final SessionEnergy energy;
+  final ValueChanged<Activity> onPicked;
+
+  const _ActivityField({super.key, required this.catalog, required this.energy, required this.onPicked});
+
+  @override
+  Widget build(BuildContext context) {
+    final activity = catalog.activity(energy.session.activityCode);
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () async {
+        final picked = await ActivityPickerDialog.show(context, catalog, activity);
+        if (picked != null) onPicked(picked);
+      },
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: 'Вид нагрузки',
+          suffixIcon: const Icon(Icons.search),
+          helperText: activity == null
+              ? null
+              : 'MET ${fmt(activity.met, 1)} · ${fmt(energy.kcalPerMinute ?? 0, 2)} ккал/мин',
+          errorText: activity == null ? 'Выберите вид нагрузки' : null,
+        ),
+        child: Text(activity?.displayName ?? '', maxLines: 2, overflow: TextOverflow.ellipsis),
       ),
     );
   }

@@ -137,12 +137,34 @@ enum TrainingMode {
   manual,
 }
 
+/// Одна тренировка: вид нагрузки из справочника и длительность.
+class TrainingSession {
+  final String activityCode;
+  final int minutes;
+
+  const TrainingSession({required this.activityCode, required this.minutes});
+
+  TrainingSession copyWith({String? activityCode, int? minutes}) =>
+      TrainingSession(activityCode: activityCode ?? this.activityCode, minutes: minutes ?? this.minutes);
+
+  @override
+  bool operator ==(Object other) =>
+      other is TrainingSession && other.activityCode == activityCode && other.minutes == minutes;
+
+  @override
+  int get hashCode => Object.hash(activityCode, minutes);
+}
+
+/// Сколько тренировок за день можно задать.
+const trainingCountRange = (min: 1, max: 3);
+
 /// Способ расчёта базового обмена.
 enum BmrMethod {
   /// Миффлин — Сан Жеор (рост, масса, возраст, пол).
   mifflin,
 
-  /// По проценту жира: масса × 24 × коэффициент пола × коэффициент по % жира.
+  /// Каннингем: 500 + 22 × безжировая масса; LBM = масса × (1 − % жира / 100).
+  /// Имя `bodyFat` хранится в БД — не переименовывать.
   bodyFat,
 }
 
@@ -161,8 +183,8 @@ class Profile {
   // Шаг 2 — тренировка, цель, БЖУ
   final bool includeTraining;
   final TrainingMode trainingMode;
-  final String activityCode;
-  final int trainingMinutes;
+  /// Тренировки дня (1–3) для режима [TrainingMode.activity].
+  final List<TrainingSession> trainings;
 
   /// Калории тренировки по данным браслета (режим [TrainingMode.manual]).
   final double manualTrainingKcal;
@@ -188,8 +210,7 @@ class Profile {
     required this.age,
     required this.includeTraining,
     required this.trainingMode,
-    required this.activityCode,
-    required this.trainingMinutes,
+    required this.trainings,
     required this.manualTrainingKcal,
     required this.goalPercent,
     required this.proteinPerKg,
@@ -205,8 +226,7 @@ class Profile {
     int? age,
     bool? includeTraining,
     TrainingMode? trainingMode,
-    String? activityCode,
-    int? trainingMinutes,
+    List<TrainingSession>? trainings,
     double? manualTrainingKcal,
     double? goalPercent,
     double? proteinPerKg,
@@ -221,8 +241,7 @@ class Profile {
         age: age ?? this.age,
         includeTraining: includeTraining ?? this.includeTraining,
         trainingMode: trainingMode ?? this.trainingMode,
-        activityCode: activityCode ?? this.activityCode,
-        trainingMinutes: trainingMinutes ?? this.trainingMinutes,
+        trainings: trainings ?? this.trainings,
         manualTrainingKcal: manualTrainingKcal ?? this.manualTrainingKcal,
         goalPercent: goalPercent ?? this.goalPercent,
         proteinPerKg: proteinPerKg ?? this.proteinPerKg,

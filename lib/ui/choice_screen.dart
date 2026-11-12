@@ -8,7 +8,7 @@ import 'app_logo.dart';
 import 'body_fat_screen.dart';
 import 'form_widgets.dart';
 import 'format.dart';
-import 'theme_toggle.dart';
+import 'account_button.dart';
 import 'training_screen.dart';
 
 const _instruction = [
@@ -31,7 +31,7 @@ class ChoiceScreen extends ConsumerWidget {
       appBar: AppBar(
         toolbarHeight: 64,
         title: const AppLogo(size: 30, showTagline: false),
-        actions: const [ThemeToggleButton(), SizedBox(width: 8)],
+        actions: const [AppBarActions(trailing: 8)],
       ),
       body: p == null
           ? const Center(child: CircularProgressIndicator())

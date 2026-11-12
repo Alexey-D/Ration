@@ -23,8 +23,7 @@ void main() {
     expect(r.fatPercent, closeTo(28.8647196586128, 1e-9));
     expect(r.leanKg, closeTo(86.2 - 24.881388345724243, 1e-9));
     expect(r.muscleKg, closeTo(38.938532900000006, 1e-9)); // МСМ
-    expect(r.leanFactor, 0.85); // > 28 %
-    expect(r.bmr, closeTo(86.2 * 24 * 0.85, 1e-9));
+    expect(r.bmr, closeTo(500 + 22 * (86.2 - 24.881388345724243), 1e-9)); // Каннингем
   });
 
   test('женщина, лист «калипер женщина», столбец D', () {
@@ -40,8 +39,7 @@ void main() {
     expect(r.fatKg, closeTo(9.5777450373248083, 1e-9));
     expect(r.fatPercent, closeTo(13.88078990916639, 1e-9));
     expect(r.muscleKg, closeTo(34.25318154, 1e-8));
-    expect(r.leanFactor, 1.0); // < 18 %
-    expect(r.bmr, closeTo(69 * 24 * 0.9, 1e-9));
+    expect(r.bmr, closeTo(500 + 22 * (69 - 9.5777450373248083), 1e-9));
   });
 
   test('второй файл: женщина 170 см / 59,5 кг — % жира и LBM', () {
@@ -69,10 +67,8 @@ void main() {
     expect(r.fatKg, closeTo(8.8073077412133998, 1e-9));
   });
 
-  test('коэффициенты по % жира (лист «схема»)', () {
-    expect([for (final p in [8.0, 13.9, 14.0, 19.9, 20.0, 27.9, 28.0, 35.0]) leanFactor(Sex.male, p)],
-        [1.0, 1.0, 0.95, 0.95, 0.90, 0.90, 0.85, 0.85]);
-    expect([for (final p in [12.0, 17.9, 18.0, 27.9, 28.0, 37.9, 38.0, 45.0]) leanFactor(Sex.female, p)],
-        [1.0, 1.0, 0.95, 0.95, 0.90, 0.90, 0.85, 0.85]);
+  test('Каннингем: 500 + 22 × LBM', () {
+    expect(leanMass(weightKg: 102, fatPercent: 26), closeTo(75.48, 1e-9));
+    expect(cunninghamBmr(weightKg: 102, fatPercent: 26), closeTo(500 + 22 * 75.48, 1e-9)); // 2160,56
   });
 }

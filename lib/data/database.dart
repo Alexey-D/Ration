@@ -7,7 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart' as ffi;
 
 import 'seed.dart';
 
-const _schemaVersion = 4;
+const _schemaVersion = 6;
 
 final _schema = [
   '''CREATE TABLE food_category (
@@ -46,18 +46,8 @@ final _schema = [
        category_id INTEGER NOT NULL REFERENCES food_category(id),
        default_food_id INTEGER REFERENCES food(id),
        base_grams REAL NOT NULL)''',
-  '''CREATE TABLE profile (
-       id INTEGER PRIMARY KEY CHECK (id = 1),
-       sex TEXT NOT NULL,
-       weight REAL NOT NULL,
-       height REAL NOT NULL,
-       age INTEGER NOT NULL,
-       activity_code TEXT NOT NULL,
-       training_minutes INTEGER NOT NULL,
-       include_training INTEGER NOT NULL,
-       goal_percent REAL NOT NULL,
-       ${[..._profileV3Columns, ..._profileV4Columns].join(',\n       ')})''',
   _settingTable,
+  ..._accountTables,
 ];
 
 // v2: настройки приложения (тема и т.п.)
@@ -79,6 +69,61 @@ const _profileV4Columns = [
   'body_fat_percent REAL',
 ];
 
+// Столбцы профиля пользователя (кроме ключа).
+const _profileColumns = [
+  'sex TEXT NOT NULL',
+  'weight REAL NOT NULL',
+  'height REAL NOT NULL',
+  'age INTEGER NOT NULL',
+  'activity_code TEXT NOT NULL',
+  'training_minutes INTEGER NOT NULL',
+  'include_training INTEGER NOT NULL',
+  'goal_percent REAL NOT NULL',
+];
+
+// v6: учётные записи, профиль каждого пользователя, история замеров.
+// Старая таблица profile (один профиль на приложение) остаётся только в обновлённых
+// БД: её данные переносятся первому зарегистрированному пользователю.
+final _accountTables = [
+  '''CREATE TABLE user (
+       id INTEGER PRIMARY KEY,
+       login TEXT NOT NULL UNIQUE COLLATE NOCASE,
+       name TEXT NOT NULL,
+       password_hash TEXT NOT NULL,
+       created_at TEXT NOT NULL)''',
+  '''CREATE TABLE user_profile (
+       user_id INTEGER PRIMARY KEY REFERENCES user(id) ON DELETE CASCADE,
+       ${[..._profileColumns, ..._profileV3Columns, ..._profileV4Columns, ..._profileV5Columns].join(', ')})''',
+  '''CREATE TABLE measurement (
+       id INTEGER PRIMARY KEY,
+       user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+       date TEXT NOT NULL,
+       weight REAL,
+       height REAL,
+       age INTEGER,
+       body_fat_percent REAL,
+       fat_kg REAL,
+       lean_kg REAL,
+       muscle_kg REAL,
+       skinfolds TEXT,
+       girths TEXT,
+       bmr REAL,
+       bmr_method TEXT,
+       tdc REAL,
+       target_kcal REAL,
+       target_protein REAL,
+       target_fat REAL,
+       target_carbs REAL,
+       note TEXT,
+       UNIQUE (user_id, date))''',
+];
+
+// v5: до 3 тренировок в день — «код:минуты;код:минуты». Первая дублируется
+// в activity_code / training_minutes.
+const _profileV5Columns = [
+  'trainings TEXT',
+];
+
 /// Открывает БД приложения; при первом запуске создаёт схему и
 /// заполняет справочники из assets/seed.
 Future<Database> openAppDatabase() async {
@@ -86,13 +131,22 @@ Future<Database> openAppDatabase() async {
       (Platform.isWindows || Platform.isLinux || Platform.isMacOS) ? _ffiFactory() : databaseFactory;
   final dir = await getApplicationSupportDirectory();
   await dir.create(recursive: true);
+  return openAppDatabaseAt(factory, p.join(dir.path, 'ration_planner.db'));
+}
+
+/// Открывает (создаёт или обновляет) БД по пути; [loadSeed] — справочники для заливки.
+Future<Database> openAppDatabaseAt(
+  DatabaseFactory factory,
+  String path, {
+  Future<SeedData> Function() loadSeed = SeedData.fromAssets,
+}) {
   return factory.openDatabase(
-    p.join(dir.path, 'ration_planner.db'),
+    path,
     options: OpenDatabaseOptions(
       version: _schemaVersion,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: (db, _) async {
-        final seed = await SeedData.fromAssets();
+        final seed = await loadSeed();
         await db.transaction((txn) async {
           for (final sql in _schema) {
             await txn.execute(sql);
@@ -103,7 +157,7 @@ Future<Database> openAppDatabase() async {
       onUpgrade: (db, oldVersion, _) async {
         if (oldVersion < 2) await db.execute(_settingTable);
         if (oldVersion < 3) {
-          final seed = await SeedData.fromAssets();
+          final seed = await loadSeed();
           await db.transaction((txn) async {
             for (final column in _profileV3Columns) {
               await txn.execute('ALTER TABLE profile ADD COLUMN $column');
@@ -116,6 +170,19 @@ Future<Database> openAppDatabase() async {
           for (final column in _profileV4Columns) {
             await db.execute('ALTER TABLE profile ADD COLUMN $column');
           }
+        }
+        if (oldVersion < 5) {
+          for (final column in _profileV5Columns) {
+            await db.execute('ALTER TABLE profile ADD COLUMN $column');
+          }
+          await db.execute("UPDATE profile SET trainings = activity_code || ':' || training_minutes");
+        }
+        if (oldVersion < 6) {
+          await db.transaction((txn) async {
+            for (final sql in _accountTables) {
+              await txn.execute(sql);
+            }
+          });
         }
       },
     ),
