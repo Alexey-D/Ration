@@ -119,7 +119,8 @@ lib/
             measurement_dialogs.dart (замер вручную, «Сохранить замер»),
   ui/       profile_screen.dart (шаг 1), choice_screen.dart (шаг 2 — выбор расчёта),
             training_screen.dart и body_fat_screen.dart (шаг 3), ration_screen.dart,
-            activity_picker.dart, form_widgets.dart (общие поля, инструкция),
+            activity_picker.dart, form_widgets.dart (раскладка шага, разделы, поля, справка во всплывающем окне),
+            energy_widgets.dart (полосы долей, легенды, итоги энергии и БЖУ), palette.dart (смысловые цвета БЖУ и энергии),
             theme.dart (цвета), app_logo.dart (логотип), theme_toggle.dart
 assets/seed/  foods.json, activities.json — справочники из xlsx
               activities_ru.json — русские названия видов нагрузки (код → название)

@@ -80,11 +80,10 @@ class _AnthropometryFormState extends ConsumerState<_AnthropometryForm> {
   Widget build(BuildContext context) {
     const gap = SizedBox(height: 16);
     return StepFormLayout(
-      instructions: _instruction,
       form: Form(
         key: _formKey,
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          const StepTitle(step: 1, of: 3, title: 'Антропометрия'),
+          const StepTitle(step: 1, of: 3, title: 'Антропометрия', help: _instruction),
           const SizedBox(height: 20),
           SegmentedButton<Sex>(
             segments: const [

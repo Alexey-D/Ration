@@ -5,6 +5,7 @@ import 'package:ration_planner/app.dart';
 import 'package:ration_planner/domain/account.dart';
 import 'package:ration_planner/domain/models.dart';
 import 'package:ration_planner/state/providers.dart';
+import 'package:ration_planner/ui/form_widgets.dart';
 
 import 'support/test_catalog.dart';
 
@@ -35,7 +36,12 @@ void main() {
     final repo = await pumpApp(tester);
 
     expect(find.text('Шаг 1 из 3'), findsOneWidget);
-    expect(find.text('Как пользоваться'), findsOneWidget);
+    // справка скрыта и открывается во всплывающем окне
+    expect(find.byType(InstructionList), findsNothing);
+    await tapText(tester, 'Как пользоваться');
+    expect(find.byType(InstructionList), findsOneWidget);
+    await tapText(tester, 'Понятно');
+    expect(find.byType(InstructionList), findsNothing);
     await tapText(tester, 'Далее');
 
     expect(find.text('Шаг 2 из 3'), findsOneWidget);
@@ -90,7 +96,9 @@ void main() {
     expect(find.text('4664 ккал'), findsOneWidget); // 2415 + 749,7 + 1499,4
 
     await tapText(tester, 'Рассчитать рацион');
-    expect(find.text('Ккал тренировок'), findsOneWidget);
+    expect(find.text('Итоги дня'), findsOneWidget);
+    expect(find.text('1499 ккал'), findsOneWidget); // вторая тренировка — отдельной строкой
+    expect(find.text('2249'), findsOneWidget); // тренировки в разбивке расхода
     expect(repo.saved!.trainings.map((t) => t.minutes), [30, 60]);
   });
 

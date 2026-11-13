@@ -36,9 +36,8 @@ class ChoiceScreen extends ConsumerWidget {
       body: p == null
           ? const Center(child: CircularProgressIndicator())
           : StepFormLayout(
-              instructions: _instruction,
               form: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                const StepTitle(step: 2, of: 3, title: 'Что рассчитать?'),
+                const StepTitle(step: 2, of: 3, title: 'Что рассчитать?', help: _instruction),
                 const SizedBox(height: 8),
                 Text(
                   '${p.sex == Sex.male ? 'Мужчина' : 'Женщина'} · ${numText(p.weightKg)} кг · '
