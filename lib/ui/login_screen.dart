@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/account.dart';
+import '../domain/subscription.dart';
 import '../state/providers.dart';
 import 'app_logo.dart';
+import 'legal.dart';
 import 'theme_toggle.dart';
 
 /// Вход и регистрация (локальные учётные записи).
@@ -23,6 +25,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _register = false;
   bool _busy = false;
   bool _showPassword = false;
+  bool _privacyAccepted = false;
+  bool _personalDataAccepted = false;
   String? _error;
 
   @override
@@ -39,7 +43,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _busy = true);
     final auth = ref.read(authProvider.notifier);
     final error = _register
-        ? await auth.register(login: _login.text, name: _name.text, password: _password.text)
+        ? await auth.register(
+            login: _login.text,
+            name: _name.text,
+            password: _password.text,
+            privacyPolicyAccepted: _privacyAccepted,
+            personalDataAccepted: _personalDataAccepted,
+          )
         : await auth.login(_login.text, _password.text);
     if (mounted) {
       setState(() {
@@ -78,6 +88,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         onSelectionChanged: (s) => setState(() {
                           _register = s.first;
                           _error = null;
+                          // галочки создаются заново — сбрасываем и их значения
+                          _privacyAccepted = false;
+                          _personalDataAccepted = false;
                         }),
                       ),
                       const SizedBox(height: 24),
@@ -131,6 +144,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           onFieldSubmitted: (_) => _submit(),
                           validator: (v) => v != _password.text ? 'Пароли не совпадают' : null,
                         ),
+                        const SizedBox(height: 12),
+                        ConsentCheckbox(
+                          key: const Key('privacyConsent'),
+                          parts: const [
+                            ('Я ознакомлен(а) с ', null),
+                            ('политикой конфиденциальности', LegalDocument.privacyPolicy),
+                          ],
+                          errorText: 'Нужно ознакомиться с политикой конфиденциальности',
+                          onChanged: (v) => _privacyAccepted = v,
+                        ),
+                        ConsentCheckbox(
+                          key: const Key('personalDataConsent'),
+                          parts: const [
+                            ('Даю ', null),
+                            ('согласие на обработку персональных данных', LegalDocument.personalDataConsent),
+                          ],
+                          errorText: 'Без согласия на обработку персональных данных регистрация невозможна',
+                          onChanged: (v) => _personalDataAccepted = v,
+                        ),
                       ],
                       if (_error != null) ...[
                         gap,
@@ -152,6 +184,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodySmall,
               ),
+              const SizedBox(height: 8),
+              const LegalFooter(documents: [LegalDocument.privacyPolicy, LegalDocument.personalDataConsent]),
             ]),
           ),
         ),

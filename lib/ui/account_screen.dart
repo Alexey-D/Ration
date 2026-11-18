@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/account.dart';
+import '../domain/subscription.dart';
 import '../state/providers.dart';
 import 'account_button.dart';
 import 'app_logo.dart';
 import 'format.dart';
 import 'measurement_dialogs.dart';
+import 'subscription_screen.dart';
 
 /// Личный кабинет: данные пользователя и динамика замеров.
 class AccountScreen extends ConsumerWidget {
@@ -62,6 +64,8 @@ class _Cabinet extends ConsumerWidget {
           constraints: const BoxConstraints(maxWidth: 1100),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             _UserCard(user: user, count: measurements.length, onAdd: () => _add(context, ref)),
+            gap,
+            const _SubscriptionStrip(),
             gap,
             if (measurements.isEmpty)
               const _EmptyHint()
@@ -120,6 +124,51 @@ class _UserCard extends StatelessWidget {
               onPressed: onAdd,
               icon: const Icon(Icons.add),
               label: const Text('Добавить замер'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Статус подписки и переход к управлению ею.
+class _SubscriptionStrip extends ConsumerWidget {
+  const _SubscriptionStrip();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sub = ref.watch(subscriptionProvider).valueOrNull;
+    if (sub == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final now = ref.watch(clockProvider)();
+    final status = sub.status(now);
+    final until = sub.accessUntil(now);
+    final color = switch (status) {
+      SubscriptionStatus.active => theme.colorScheme.primary,
+      SubscriptionStatus.trial => theme.colorScheme.tertiary,
+      SubscriptionStatus.expired => theme.colorScheme.error,
+      SubscriptionStatus.none => theme.colorScheme.onSurfaceVariant,
+    };
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Wrap(
+          spacing: 16,
+          runSpacing: 8,
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.workspace_premium_outlined, color: color),
+              const SizedBox(width: 12),
+              Text(status.label, style: theme.textTheme.titleMedium?.copyWith(color: color)),
+              if (until != null) Text('  ·  до ${fmtDate(until)}', style: theme.textTheme.bodyMedium),
+            ]),
+            OutlinedButton(
+              key: const Key('openSubscription'),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SubscriptionScreen())),
+              child: Text(status == SubscriptionStatus.active ? 'Управлять подпиской' : 'Оформить подписку'),
             ),
           ],
         ),

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ration_planner/app.dart';
 import 'package:ration_planner/domain/account.dart';
 import 'package:ration_planner/domain/models.dart';
+import 'package:ration_planner/domain/subscription.dart';
 import 'package:ration_planner/state/providers.dart';
 import 'package:ration_planner/ui/form_widgets.dart';
 
@@ -159,9 +160,27 @@ void main() {
 
     await tester.enterText(find.byKey(const Key('confirmField')), '1234');
     await tapText(tester, 'Зарегистрироваться');
+    // без согласий регистрация не проходит
+    expect(find.text('Нужно ознакомиться с политикой конфиденциальности'), findsOneWidget);
+    expect(repo.users, isEmpty);
+
+    // ссылка открывает документ-заглушку
+    await tester.tap(find.text('политикой конфиденциальности'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('legalDialog')), findsOneWidget);
+    await tapText(tester, 'Закрыть');
+
+    for (final key in ['privacyConsent', 'personalDataConsent']) {
+      await tester.tap(find.descendant(of: find.byKey(Key(key)), matching: find.byType(Checkbox)));
+    }
+    await tester.pumpAndSettle();
+    await tapText(tester, 'Зарегистрироваться');
     expect(find.text('Шаг 1 из 3'), findsOneWidget);
     expect(repo.users.single.$1.name, 'Анна');
     expect(repo.users.single.$2, isNot(contains('1234'))); // хранится хэш, не пароль
+    final id = repo.users.single.$1.id;
+    expect(Consents.decode(repo.settings['user:$id:consents']).complete, isTrue);
+    expect(Subscription.decode(repo.settings['user:$id:subscription']).status(DateTime.now()), SubscriptionStatus.trial);
 
     await openAccountMenu(tester, 'Выйти');
     expect(find.text('Войти'), findsOneWidget);
@@ -205,6 +224,39 @@ void main() {
     expect(find.text('9,5 %'), findsOneWidget); // последние значения
     expect(find.byKey(const Key('metric-bodyFat')), findsOneWidget);
     expect(find.byKey(const Key('metric-bmr')), findsNothing); // BMR не сохраняли
+  });
+
+  testWidgets('подписка: тариф → оферта → демо-оплата → подписка активна', (tester) async {
+    final repo = await pumpApp(tester);
+    await openAccountMenu(tester, 'Подписка');
+    expect(find.text('Нет подписки'), findsOneWidget);
+    expect(find.text('Тариф «Рацион · Месяц»'), findsOneWidget);
+    expect(find.text('7 дней бесплатно'), findsOneWidget);
+
+    // без согласия с офертой к оплате не перейти
+    await tester.tap(find.byKey(const Key('payButton')));
+    await tester.pumpAndSettle();
+    expect(find.text('Чтобы продолжить, примите условия оферты и правил подписки'), findsOneWidget);
+    expect(find.text('Платёжный сервис'), findsNothing);
+
+    await tester.tap(find.descendant(of: find.byKey(const Key('offerConsent')), matching: find.byType(Checkbox)));
+    await tester.tap(find.byKey(const Key('payButton')));
+    await tester.pumpAndSettle();
+    expect(find.text('Платёжный сервис'), findsOneWidget);
+    expect(find.textContaining('деньги не списываются'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('confirmPayment')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('paymentDone')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('paymentBack')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Подписка активна'), findsOneWidget);
+    expect(find.textContaining('Оплата 1 000 ₽ зафиксирована'), findsOneWidget);
+    final sub = Subscription.decode(repo.settings['user:1:subscription']);
+    expect(sub.payments.single.amountRub, 1000);
+    expect(sub.offerAcceptedAt, isNotNull);
+    expect(find.byKey(const Key('offerConsent')), findsNothing); // оферта принята один раз
   });
 
   testWidgets('личный кабинет: ручной замер и изменение к предыдущему', (tester) async {

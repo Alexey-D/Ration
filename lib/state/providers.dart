@@ -9,6 +9,7 @@ import '../domain/energy_calculator.dart';
 import '../domain/meal_layout.dart';
 import '../domain/models.dart';
 import '../domain/ration_plan.dart';
+import '../domain/subscription.dart';
 
 /// Подменяется в main() (SQLite) и в тестах (фейк).
 final repositoryProvider = Provider<AppRepository>((ref) => throw UnimplementedError());
@@ -43,15 +44,29 @@ class AuthNotifier extends AsyncNotifier<AppUser?> {
   }
 
   /// null — пользователь создан и вошёл, иначе текст ошибки.
-  Future<String?> register({required String login, required String name, required String password}) async {
+  /// Без согласий с политикой конфиденциальности и на обработку ПД регистрация невозможна.
+  /// Новому пользователю сразу начинается пробный период.
+  Future<String?> register({
+    required String login,
+    required String name,
+    required String password,
+    required bool privacyPolicyAccepted,
+    required bool personalDataAccepted,
+  }) async {
     final error = validateLogin(login) ?? validatePassword(password);
     if (error != null) return error;
+    if (!privacyPolicyAccepted || !personalDataAccepted) {
+      return 'Для регистрации нужно принять политику конфиденциальности и дать согласие на обработку персональных данных';
+    }
     try {
       final user = await _repo.createUser(
         login: login,
         name: name.trim().isEmpty ? login.trim() : name,
         passwordHash: ref.read(passwordHasherProvider).hash(password),
       );
+      final now = ref.read(clockProvider)();
+      await _repo.saveSetting(consentsKey(user.id), Consents(privacyPolicyAt: now, personalDataAt: now).encode());
+      await _repo.saveSetting(subscriptionKey(user.id), Subscription.empty.startTrial(now).encode());
       await _start(user);
       return null;
     } on LoginTakenException {
@@ -71,6 +86,55 @@ class AuthNotifier extends AsyncNotifier<AppUser?> {
 }
 
 final currentUserProvider = Provider<AppUser?>((ref) => ref.watch(authProvider).valueOrNull);
+
+/// Текущее время; в тестах подменяется.
+final clockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
+
+String subscriptionKey(int userId) => 'user:$userId:subscription';
+String consentsKey(int userId) => 'user:$userId:consents';
+
+/// Согласия текущего пользователя (даты принятия документов).
+final consentsProvider = FutureProvider<Consents>((ref) async {
+  final user = ref.watch(currentUserProvider);
+  if (user == null) return const Consents();
+  return Consents.decode(await ref.watch(repositoryProvider).loadSetting(consentsKey(user.id)));
+});
+
+/// Подписка текущего пользователя. Прототип: оплата демонстрационная,
+/// доступ к функциям по статусу подписки пока не ограничивается.
+final subscriptionProvider =
+    AsyncNotifierProvider<SubscriptionNotifier, Subscription>(SubscriptionNotifier.new);
+
+class SubscriptionNotifier extends AsyncNotifier<Subscription> {
+  AppRepository get _repo => ref.read(repositoryProvider);
+  DateTime _now() => ref.read(clockProvider)();
+
+  @override
+  Future<Subscription> build() async {
+    final user = ref.watch(currentUserProvider);
+    if (user == null) return Subscription.empty;
+    return Subscription.decode(await _repo.loadSetting(subscriptionKey(user.id)));
+  }
+
+  Future<void> _save(Subscription Function(Subscription) change) async {
+    final user = ref.read(currentUserProvider)!;
+    final next = change(state.valueOrNull ?? await future);
+    await _repo.saveSetting(subscriptionKey(user.id), next.encode());
+    state = AsyncData(next);
+  }
+
+  Future<void> startTrial() => _save((s) => s.startTrial(_now()));
+
+  Future<void> acceptOffer() => _save((s) => s.withOfferAccepted(_now()));
+
+  Future<void> setAutoRenew(bool value) => _save((s) => s.withAutoRenew(value));
+
+  /// Фиксация оплаты после ответа платёжного сервиса; возвращает запись об оплате.
+  Future<Payment> recordPayment(String paymentId) async {
+    await _save((s) => s.withPayment(now: _now(), paymentId: paymentId));
+    return state.requireValue.payments.last;
+  }
+}
 
 /// Сохранённый профиль текущего пользователя (у нового — профиль по умолчанию).
 final savedProfileProvider = FutureProvider<Profile>((ref) async {
